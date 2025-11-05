@@ -52,14 +52,36 @@ typedef struct {
     int tropas;      // Número de tropas
 } Territorio;
 
+/*
+ * Struct: Jogador
+ * 
+ * Representa um jogador no sistema de batalha estratégica:
+ * - nome: nome do jogador (até 29 caracteres + '\0')
+ * - cor: cor que representa o jogador no mapa (até 9 caracteres + '\0')
+ * - missao: ponteiro para string da missão (alocada dinamicamente)
+ * - ativo: flag indicando se o jogador ainda está no jogo
+ * - territoriosControlados: contador de territórios sob controle
+ */
+typedef struct {
+    char nome[30];           // Nome do jogador
+    char cor[10];           // Cor do jogador
+    char *missao;           // Missão alocada dinamicamente
+    bool ativo;             // Status do jogador (ativo/eliminado)
+    int territoriosControlados; // Número de territórios controlados
+} Jogador;
+
 // ============================================================================
 // CONSTANTES
 // ============================================================================
 
 #define BUFFER_SIZE 100          // Tamanho padrão para buffers de entrada
-#define MIN_TERRITORIOS 2        // Mínimo de territórios para batalha
+#define MIN_TERRITORIOS 5        // Mínimo de territórios para batalha estratégica
 #define MAX_TERRITORIOS 20       // Máximo de territórios suportados
 #define MAX_NOME 30             // Tamanho máximo para nomes
+#define MAX_JOGADORES 6         // Máximo de jogadores simultâneos
+#define MIN_JOGADORES 2         // Mínimo de jogadores para o jogo
+#define TOTAL_MISSOES 8         // Total de missões disponíveis
+#define MAX_MISSAO 200          // Tamanho máximo da string de missão
 #define DADO_MIN 1              // Valor mínimo do dado de batalha
 #define DADO_MAX 6              // Valor máximo do dado de batalha
 
@@ -74,12 +96,27 @@ typedef struct {
 void exibirCabecalho(void);
 void inicializarSistema(void);
 int obterNumeroTerritorios(void);
+int obterNumeroJogadores(void);
 
 // Funções de alocação e liberação de memória
 Territorio* alocarTerritorios(int quantidade);
-void liberarMemoria(Territorio* mapa);
+Jogador* alocarJogadores(int quantidade);
+void liberarMemoriaCompleta(Territorio* mapa, Jogador* jogadores, int numJogadores);
 
-// Funções de cadastro e exibição
+// Funções de missões estratégicas
+void inicializarMissoes(char missoes[][MAX_MISSAO]);
+void atribuirMissao(char* destino, char missoes[][MAX_MISSAO], int totalMissoes);
+int verificarMissao(char* missao, Territorio* mapa, int tamanho, const char* corJogador);
+void exibirMissao(const char* missao, const char* nomeJogador);
+void exibirTodasMissoes(Jogador* jogadores, int numJogadores);
+
+// Funções de jogadores
+void cadastrarJogadores(Jogador* jogadores, int numJogadores, char missoes[][MAX_MISSAO]);
+void distribuirTerritorios(Territorio* mapa, int numTerritorios, Jogador* jogadores, int numJogadores);
+void atualizarEstatisticasJogadores(Jogador* jogadores, int numJogadores, Territorio* mapa, int numTerritorios);
+int verificarVencedor(Jogador* jogadores, int numJogadores, Territorio* mapa, int numTerritorios);
+
+// Funções de cadastro e exibição de territórios
 void cadastrarTerritorio(Territorio *t, int numero);
 void exibirTerritorio(const Territorio *t, int numero);
 void exibirTodosTeritorios(const Territorio *territorios, int total);
@@ -88,7 +125,8 @@ void exibirMapaSimplificado(const Territorio *territorios, int total);
 // Funções de batalha e simulação
 bool atacar(Territorio* atacante, Territorio* defensor);
 int simularDado(void);
-void executarBatalha(Territorio *mapa, int numTerritorios);
+void executarBatalhaMultiplayer(Territorio *mapa, int numTerritorios, Jogador* jogadores, int numJogadores);
+bool validarAtaque(const Territorio* atacante, const Territorio* defensor);
 
 // Funções utilitárias
 void limparTela(void);
@@ -100,25 +138,32 @@ void exibirEstatisticas(Territorio *mapa, int numTerritorios);
 // ============================================================================
 
 /**
- * Função principal - coordena todo o fluxo do programa
+ * Função principal - Sistema de Batalha Estratégica com Missões
  * 
- * Esta função implementa o fluxo completo do sistema de batalha entre
- * territórios, incluindo alocação dinâmica, cadastro, simulação de
- * batalhas e liberação adequada de memória.
+ * Implementa o sistema completo de guerra estratégica entre múltiplos
+ * jogadores, cada um com sua missão específica para vencer. Utiliza
+ * alocação dinâmica, sistema de missões, e validação de ataques.
  * 
  * Fluxo do programa:
- *   1. Inicialização do sistema (semente aleatória)
- *   2. Obtenção do número de territórios do usuário
+ *   1. Inicialização (semente aleatória e sistema de missões)
+ *   2. Configuração (número de jogadores e territórios)
  *   3. Alocação dinâmica de memória
- *   4. Cadastro interativo dos territórios
- *   5. Sistema de batalhas (loop interativo)
- *   6. Liberação de memória e encerramento
+ *   4. Cadastro de jogadores e atribuição de missões
+ *   5. Cadastro e distribuição automática de territórios
+ *   6. Loop principal de batalhas com verificação de vitória
+ *   7. Liberação completa de memória
  * 
  * @return 0 se execução foi bem-sucedida, 1 em caso de erro
  */
 int main(void) {
-    Territorio *mapa = NULL;  // Ponteiro para array de territórios alocado dinamicamente
-    int numTerritorios = 0;   // Número total de territórios
+    // Variáveis principais do jogo
+    Territorio *mapa = NULL;        // Array de territórios (alocação dinâmica)
+    Jogador *jogadores = NULL;      // Array de jogadores (alocação dinâmica)
+    int numTerritorios = 0;         // Número total de territórios
+    int numJogadores = 0;           // Número total de jogadores
+    
+    // Array de missões disponíveis (alocação estática)
+    char missoes[TOTAL_MISSOES][MAX_MISSAO];
     
     // ========================================================================
     // FASE 1: INICIALIZAÇÃO DO SISTEMA
@@ -128,94 +173,211 @@ int main(void) {
     inicializarSistema();
     
     // ========================================================================
-    // FASE 2: CONFIGURAÇÃO E ALOCAÇÃO DINÂMICA
+    // FASE 2: INICIALIZAÇÃO DO SISTEMA DE MISSÕES
     // ========================================================================
     printf("\n");
     printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║            CONFIGURAÇÃO DO MAPA DE BATALHA                ║\n");
+    printf("║               SISTEMA DE MISSÕES ESTRATÉGICAS             ║\n");
     printf("╚════════════════════════════════════════════════════════════╝\n");
     
-    // Obter número de territórios do usuário
+    inicializarMissoes(missoes);
+    aguardarEnter();
+    
+    // ========================================================================
+    // FASE 3: CONFIGURAÇÃO DE JOGADORES E TERRITÓRIOS
+    // ========================================================================
+    printf("\n");
+    printf("╔════════════════════════════════════════════════════════════╗\n");
+    printf("║                  CONFIGURAÇÃO DO JOGO                     ║\n");
+    printf("╚════════════════════════════════════════════════════════════╝\n");
+    
+    // Obter configurações do usuário
+    numJogadores = obterNumeroJogadores();
     numTerritorios = obterNumeroTerritorios();
     
-    // Alocar memória dinamicamente para os territórios
+    // Validar configurações
+    if (numTerritorios < numJogadores) {
+        printf("❌ Erro: Número de territórios deve ser >= número de jogadores!\n");
+        printf("   💡 Ajuste: %d territórios para %d jogadores.\n", numJogadores, numJogadores);
+        numTerritorios = numJogadores + 2; // Mínimo viável
+    }
+    
+    // ========================================================================
+    // FASE 4: ALOCAÇÃO DINÂMICA DE MEMÓRIA
+    // ========================================================================
+    printf("\n📊 Alocando memória dinamicamente...\n");
+    
+    // Alocar territórios
     mapa = alocarTerritorios(numTerritorios);
     if (mapa == NULL) {
-        printf("\n❌ Erro: Não foi possível alocar memória para os territórios!\n");
-        printf("   💡 Tente com um número menor de territórios.\n");
-        return 1;  // Encerrar com código de erro
+        printf("❌ Falha crítica na alocação de territórios!\n");
+        return 1;
     }
     
-    printf("\n✅ Memória alocada com sucesso para %d territórios!\n", numTerritorios);
-    printf("   📊 Tamanho alocado: %zu bytes\n", numTerritorios * sizeof(Territorio));
-    
-    // ========================================================================
-    // FASE 3: CADASTRO DOS TERRITÓRIOS
-    // ========================================================================
-    printf("\n");
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║          CADASTRO DE TERRITÓRIOS - FASE DE ENTRADA        ║\n");
-    printf("╚════════════════════════════════════════════════════════════╝\n");
-    printf("\n");
-    
-    // Loop de cadastro usando ponteiros para acessar territórios alocados
-    for (int i = 0; i < numTerritorios; i++) {
-        cadastrarTerritorio(&mapa[i], i + 1);  // Passa endereço do território
-        printf("\n");
+    // Alocar jogadores
+    jogadores = alocarJogadores(numJogadores);
+    if (jogadores == NULL) {
+        printf("❌ Falha crítica na alocação de jogadores!\n");
+        free(mapa); // Limpar memória já alocada
+        return 1;
     }
     
-    // ========================================================================
-    // FASE 4: EXIBIÇÃO INICIAL DOS TERRITÓRIOS
-    // ========================================================================
-    printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║              TERRITÓRIOS CADASTRADOS COM SUCESSO           ║\n");
-    printf("╚════════════════════════════════════════════════════════════╝\n");
+    printf("✅ Alocação bem-sucedida!\n");
+    printf("   🏰 Territórios: %d (%zu bytes)\n", numTerritorios, numTerritorios * sizeof(Territorio));
+    printf("   � Jogadores: %d (%zu bytes)\n", numJogadores, numJogadores * sizeof(Jogador));
     
+    // ========================================================================
+    // FASE 5: CADASTRO DE JOGADORES E ATRIBUIÇÃO DE MISSÕES
+    // ========================================================================
     aguardarEnter();
     limparTela();
     
-    // Exibir mapa inicial completo
-    exibirTodosTeritorios(mapa, numTerritorios);
-    exibirEstatisticas(mapa, numTerritorios);
+    cadastrarJogadores(jogadores, numJogadores, missoes);
+    
+    printf("\n🎯 Exibindo missões atribuídas:\n");
+    exibirTodasMissoes(jogadores, numJogadores);
     
     // ========================================================================
-    // FASE 5: SISTEMA DE BATALHAS INTERATIVO
+    // FASE 6: CADASTRO E DISTRIBUIÇÃO DE TERRITÓRIOS
     // ========================================================================
     printf("\n");
     printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║                  SISTEMA DE BATALHAS                      ║\n");
+    printf("║               CADASTRO DE TERRITÓRIOS                     ║\n");
+    printf("╚════════════════════════════════════════════════════════════╝\n");
+    
+    // Cadastro básico dos territórios (apenas nomes)
+    for (int i = 0; i < numTerritorios; i++) {
+        printf("🏰 Nome do território %d: ", i + 1);
+        fgets(mapa[i].nome, sizeof(mapa[i].nome), stdin);
+        
+        // Remove quebra de linha
+        size_t len = strlen(mapa[i].nome);
+        if (len > 0 && mapa[i].nome[len - 1] == '\n') {
+            mapa[i].nome[len - 1] = '\0';
+        }
+    }
+    
+    // Distribuição automática entre jogadores
+    distribuirTerritorios(mapa, numTerritorios, jogadores, numJogadores);
+    
+    // ========================================================================
+    // FASE 7: EXIBIÇÃO DO ESTADO INICIAL DO JOGO
+    // ========================================================================
+    aguardarEnter();
+    limparTela();
+    
+    printf("\n🗺️ MAPA INICIAL DO JOGO:\n");
+    exibirTodosTeritorios(mapa, numTerritorios);
+    atualizarEstatisticasJogadores(jogadores, numJogadores, mapa, numTerritorios);
+    
+    // ========================================================================
+    // FASE 8: LOOP PRINCIPAL DE BATALHAS COM VERIFICAÇÃO DE MISSÕES
+    // ========================================================================
+    printf("\n");
+    printf("╔════════════════════════════════════════════════════════════╗\n");
+    printf("║              INÍCIO DA GUERRA ESTRATÉGICA                 ║\n");
     printf("║                                                            ║\n");
-    printf("║  🎲 As batalhas são decididas por dados (1-6)             ║\n");
-    printf("║  ⚔️  Atacante vence: conquista território                  ║\n");
+    printf("║  � Cada jogador tem uma missão específica para vencer    ║\n");
+    printf("║  🎲 Batalhas decididas por dados (1-6)                    ║\n");
+    printf("║  ⚔️  Atacante vence: transfere cor e metade das tropas     ║\n");
     printf("║  🛡️  Defensor vence: atacante perde 1 tropa               ║\n");
+    printf("║  🚫 Só pode atacar territórios inimigos                   ║\n");
     printf("║                                                            ║\n");
     printf("╚════════════════════════════════════════════════════════════╝\n");
     
     aguardarEnter();
     
-    // Loop principal de batalhas
-    executarBatalha(mapa, numTerritorios);
+    // Loop principal do jogo
+    int turno = 1;
+    int vencedor = -1;
+    char continuar;
+    
+    do {
+        limparTela();
+        printf("🔄 ═══════════════════════════════════════════════════════════\n");
+        printf("                        TURNO %d\n", turno);
+        printf("═══════════════════════════════════════════════════════════🔄\n");
+        
+        // Mostrar estado atual
+        printf("\n📊 SITUAÇÃO ATUAL DOS JOGADORES:\n");
+        for (int i = 0; i < numJogadores; i++) {
+            if (jogadores[i].ativo) {
+                printf("👤 %s (%s): %d territórios\n", 
+                       jogadores[i].nome, jogadores[i].cor, jogadores[i].territoriosControlados);
+            }
+        }
+        
+        // Executar uma rodada de batalha
+        executarBatalhaMultiplayer(mapa, numTerritorios, jogadores, numJogadores);
+        
+        // Atualizar estatísticas
+        atualizarEstatisticasJogadores(jogadores, numJogadores, mapa, numTerritorios);
+        
+        // Verificar se alguém cumpriu sua missão
+        vencedor = verificarVencedor(jogadores, numJogadores, mapa, numTerritorios);
+        
+        if (vencedor != -1) {
+            // Anunciar vencedor
+            printf("\n🏆 ═══════════════════════════════════════════════════════════\n");
+            printf("                      TEMOS UM VENCEDOR!\n");
+            printf("═══════════════════════════════════════════════════════════🏆\n");
+            printf("🎉 %s cumpriu sua missão e venceu o jogo!\n", jogadores[vencedor].nome);
+            printf("🎯 Missão: %s\n", jogadores[vencedor].missao);
+            printf("🏰 Territórios controlados: %d\n", jogadores[vencedor].territoriosControlados);
+            break;
+        }
+        
+        // Verificar se ainda há jogadores ativos
+        int jogadoresAtivos = 0;
+        for (int i = 0; i < numJogadores; i++) {
+            if (jogadores[i].ativo) jogadoresAtivos++;
+        }
+        
+        if (jogadoresAtivos <= 1) {
+            printf("\n🏁 Jogo terminado - apenas 1 jogador restante!\n");
+            break;
+        }
+        
+        // Perguntar se quer continuar
+        printf("\n🎮 Continuar para o próximo turno? (s/N): ");
+        while (getchar() != '\n'); // Limpar buffer
+        continuar = getchar();
+        turno++;
+        
+    } while (continuar == 's' || continuar == 'S');
     
     // ========================================================================
-    // FASE 6: LIBERAÇÃO DE MEMÓRIA E ENCERRAMENTO
+    // FASE 9: RELATÓRIO FINAL E LIBERAÇÃO DE MEMÓRIA
     // ========================================================================
     printf("\n");
     printf("╔════════════════════════════════════════════════════════════╗\n");
-    printf("║                 ENCERRANDO SISTEMA                        ║\n");
+    printf("║                    RELATÓRIO FINAL                        ║\n");
     printf("╚════════════════════════════════════════════════════════════╝\n");
     
-    printf("🧹 Liberando memória alocada dinamicamente...\n");
-    liberarMemoria(mapa);
-    printf("✅ Memória liberada com sucesso!\n");
+    printf("🏁 Jogo finalizado após %d turnos\n", turno - 1);
+    printf("📊 Estado final dos jogadores:\n");
     
-    printf("\n🏆 Obrigado por jogar o Sistema de Batalha entre Territórios!\n");
+    for (int i = 0; i < numJogadores; i++) {
+        printf("👤 %s (%s): %s - %d territórios\n", 
+               jogadores[i].nome, jogadores[i].cor, 
+               jogadores[i].ativo ? "ATIVO" : "ELIMINADO", 
+               jogadores[i].territoriosControlados);
+    }
+    
+    // Liberação completa de memória
+    printf("\n");
+    liberarMemoriaCompleta(mapa, jogadores, numJogadores);
+    
+    printf("\n� Obrigado por jogar o Sistema de Guerra Estratégica!\n");
     printf("📚 Este programa demonstra:\n");
-    printf("   • Alocação dinâmica de memória (malloc/calloc)\n");
-    printf("   • Uso de ponteiros para manipulação de dados\n");
-    printf("   • Simulação com números aleatórios\n");
-    printf("   • Gerenciamento adequado de memória (free)\n");
+    printf("   • Alocação dinâmica com malloc/calloc\n");
+    printf("   • Sistema de missões com ponteiros\n");
+    printf("   • Validação de ataques entre inimigos\n");
+    printf("   • Gerenciamento completo de memória (free)\n");
+    printf("   • Passagem por valor e referência\n");
+    printf("   • Modularização e organização de código\n");
     
-    return 0;  // Encerramento bem-sucedido
+    return 0;  // Sucesso
 }
 
 // ============================================================================
@@ -387,28 +549,35 @@ bool atacar(Territorio *atacante, Territorio *defensor) {
     if (dadoAtacante > dadoDefensor) {
         // Atacante vence - conquista território
         printf("\n🏆 VITÓRIA DO ATACANTE!\n");
-        printf("   %s conquista %s!\n", atacante->nome, defensor->nome);
+        printf("   %s conquista %s!\n", atacante->dono, defensor->nome);
         
-        // Transferir território
-        strcpy(defensor->nome, atacante->nome);
+        // Calcular transferência de tropas (metade das tropas do atacante)
+        int tropasTranferidas = atacante->tropas / 2;
+        if (tropasTranferidas == 0) tropasTranferidas = 1; // Mínimo 1 tropa
+        
+        // Transferir cor e tropas conforme especificado
+        strcpy(defensor->cor, atacante->cor);
         strcpy(defensor->dono, atacante->dono);
-        defensor->tropas = atacante->tropas - 1;
-        atacante->tropas = 1;  // Atacante fica com 1 tropa apenas
+        defensor->tropas = tropasTranferidas;
+        atacante->tropas -= tropasTranferidas;
         
         printf("   🔄 Transferindo controle...\n");
-        printf("   📊 %s agora tem %d tropas em %s\n", 
-               defensor->dono, defensor->tropas, defensor->nome);
+        printf("   📊 %s transferiu %d tropas para %s\n", 
+               atacante->nome, tropasTranferidas, defensor->nome);
+        printf("   🏴 %s mantém %d tropas\n", atacante->nome, atacante->tropas);
         
         return true;
     } 
     else if (dadoDefensor > dadoAtacante) {
-        // Defensor vence - atacante perde tropa
+        // Defensor vence - atacante perde uma tropa
         printf("\n🛡️ VITÓRIA DO DEFENSOR!\n");
         printf("   %s defendeu com sucesso!\n", defensor->nome);
         
-        atacante->tropas--;
-        printf("   💀 %s perde 1 tropa (restam: %d)\n", 
-               atacante->nome, atacante->tropas);
+        if (atacante->tropas > 1) {
+            atacante->tropas--;
+            printf("   💀 %s perde 1 tropa (restam: %d)\n", 
+                   atacante->nome, atacante->tropas);
+        }
         
         return false;
     } 
@@ -711,6 +880,495 @@ void limparTela(void) {
  */
 void aguardarEnter(void) {
     printf("\n");
-    printf("  ⏎  Pressione ENTER para visualizar os territórios...");
+    printf("  ⏎  Pressione ENTER para continuar...");
     LIMPAR_BUFFER;
+}
+
+// ============================================================================
+// IMPLEMENTAÇÃO DAS FUNÇÕES - SISTEMA DE MISSÕES ESTRATÉGICAS
+// ============================================================================
+
+/**
+ * Inicializa o vetor de missões pré-definidas
+ * 
+ * Esta função preenche um vetor com diferentes tipos de missões
+ * estratégicas que serão sorteadas para os jogadores. Cada missão
+ * representa um objetivo específico que deve ser cumprido para vencer.
+ * 
+ * @param missoes Array de strings onde serão armazenadas as missões
+ */
+void inicializarMissoes(char missoes[][MAX_MISSAO]) {
+    strcpy(missoes[0], "CONQUISTADOR: Controle pelo menos 5 territórios simultaneamente");
+    strcpy(missoes[1], "DOMINAÇÃO TOTAL: Elimine completamente 1 jogador (capture todos seus territórios)");
+    strcpy(missoes[2], "ESTRATEGISTA: Mantenha 3 territórios com mais de 5 tropas cada por 2 turnos");
+    strcpy(missoes[3], "EXPANSIONISTA: Conquiste 4 territórios em sequência sem perder nenhum");
+    strcpy(missoes[4], "GENERAL SUPREMO: Acumule mais de 30 tropas distribuídas em seus territórios");
+    strcpy(missoes[5], "LIBERTADOR: Conquiste territórios de pelo menos 3 jogadores diferentes");
+    strcpy(missoes[6], "FORTALEZA: Defenda com sucesso 5 ataques consecutivos sem perder território");
+    strcpy(missoes[7], "IMPERADOR: Controle mais da metade de todos os territórios do mapa");
+    
+    printf("🎯 Sistema de missões inicializado com %d objetivos estratégicos!\n", TOTAL_MISSOES);
+}
+
+/**
+ * Atribui uma missão aleatória para um jogador
+ * 
+ * Sorteia uma missão do vetor de missões disponíveis e aloca
+ * dinamicamente memória para armazenar a string da missão do jogador.
+ * Utiliza malloc e strcpy conforme especificado nos requisitos.
+ * 
+ * @param destino Ponteiro para onde será armazenado o endereço da missão
+ * @param missoes Array de missões disponíveis
+ * @param totalMissoes Número total de missões no array
+ */
+void atribuirMissao(char* destino, char missoes[][MAX_MISSAO], int totalMissoes) {
+    if (destino == NULL || missoes == NULL || totalMissoes <= 0) {
+        printf("❌ Erro: Parâmetros inválidos para atribuição de missão!\n");
+        return;
+    }
+    
+    // Sorteia uma missão aleatória
+    int indiceSorteado = rand() % totalMissoes;
+    
+    // Aloca memória dinamicamente para a missão
+    char* missaoAlocada = (char*)malloc(MAX_MISSAO * sizeof(char));
+    if (missaoAlocada == NULL) {
+        printf("❌ Erro: Falha na alocação de memória para missão!\n");
+        return;
+    }
+    
+    // Copia a missão sorteada usando strcpy
+    strcpy(missaoAlocada, missoes[indiceSorteado]);
+    
+    // Atribui o ponteiro para a missão alocada
+    *(char**)&destino = missaoAlocada;
+    
+    printf("🎯 Missão sorteada e atribuída: Índice %d\n", indiceSorteado);
+}
+
+/**
+ * Verifica se um jogador cumpriu sua missão
+ * 
+ * Analisa o estado atual do mapa e verifica se as condições
+ * da missão do jogador foram satisfeitas. Implementa lógicas
+ * específicas para diferentes tipos de objetivos.
+ * 
+ * @param missao String da missão a ser verificada
+ * @param mapa Array de territórios do jogo
+ * @param tamanho Número de territórios no mapa
+ * @param corJogador Cor que identifica os territórios do jogador
+ * @return 1 se missão foi cumprida, 0 caso contrário
+ */
+int verificarMissao(char* missao, Territorio* mapa, int tamanho, const char* corJogador) {
+    if (missao == NULL || mapa == NULL || corJogador == NULL || tamanho <= 0) {
+        return 0; // Parâmetros inválidos
+    }
+    
+    // Contadores para análise do mapa
+    int territoriosControlados = 0;
+    int tropasTotais = 0;
+    int territoriosComMais5Tropas = 0;
+    
+    // Análise do estado atual do jogador
+    for (int i = 0; i < tamanho; i++) {
+        if (strcmp(mapa[i].cor, corJogador) == 0) {
+            territoriosControlados++;
+            tropasTotais += mapa[i].tropas;
+            if (mapa[i].tropas > 5) {
+                territoriosComMais5Tropas++;
+            }
+        }
+    }
+    
+    // Verificação baseada no conteúdo da missão (lógica simples inicial)
+    if (strstr(missao, "CONQUISTADOR") != NULL) {
+        return territoriosControlados >= 5;
+    }
+    else if (strstr(missao, "GENERAL SUPREMO") != NULL) {
+        return tropasTotais > 30;
+    }
+    else if (strstr(missao, "ESTRATEGISTA") != NULL) {
+        return territoriosComMais5Tropas >= 3;
+    }
+    else if (strstr(missao, "IMPERADOR") != NULL) {
+        return territoriosControlados > (tamanho / 2);
+    }
+    else if (strstr(missao, "EXPANSIONISTA") != NULL) {
+        return territoriosControlados >= 4;
+    }
+    
+    // Missões mais complexas retornam false por enquanto (lógica simplificada)
+    return 0;
+}
+
+/**
+ * Exibe a missão de um jogador específico
+ * 
+ * Função para exibição que recebe a missão por valor,
+ * conforme especificado nos requisitos não funcionais.
+ * 
+ * @param missao String da missão (passada por valor)
+ * @param nomeJogador Nome do jogador dono da missão
+ */
+void exibirMissao(const char* missao, const char* nomeJogador) {
+    if (missao == NULL || nomeJogador == NULL) {
+        printf("❌ Erro: Dados inválidos para exibição de missão!\n");
+        return;
+    }
+    
+    printf("\n🎯 ═══════════════════════════════════════════════════════════\n");
+    printf("                    MISSÃO ESTRATÉGICA\n");
+    printf("═══════════════════════════════════════════════════════════🎯\n");
+    printf("👤 Jogador: %s\n", nomeJogador);
+    printf("🏆 Objetivo: %s\n", missao);
+    printf("═════════════════════════════════════════════════════════════\n");
+}
+
+/**
+ * Exibe todas as missões dos jogadores ativos
+ * 
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ */
+void exibirTodasMissoes(Jogador* jogadores, int numJogadores) {
+    printf("\n📋 ═══════════════════════════════════════════════════════════\n");
+    printf("                  MISSÕES DOS JOGADORES\n");
+    printf("═══════════════════════════════════════════════════════════📋\n");
+    
+    for (int i = 0; i < numJogadores; i++) {
+        if (jogadores[i].ativo && jogadores[i].missao != NULL) {
+            printf("👤 %s (%s): %s\n", 
+                   jogadores[i].nome, jogadores[i].cor, jogadores[i].missao);
+            printf("─────────────────────────────────────────────────────────────\n");
+        }
+    }
+}
+
+// ============================================================================
+// IMPLEMENTAÇÃO DAS FUNÇÕES - GERENCIAMENTO DE JOGADORES
+// ============================================================================
+
+/**
+ * Obtém o número de jogadores que participarão do jogo
+ * 
+ * @return Número válido de jogadores
+ */
+int obterNumeroJogadores(void) {
+    int numero;
+    bool entradaValida = false;
+    
+    printf("\n👥 Quantos jogadores irão participar? ");
+    printf("(min: %d, máx: %d): ", MIN_JOGADORES, MAX_JOGADORES);
+    
+    do {
+        if (scanf("%d", &numero) != 1) {
+            printf("❌ Entrada inválida! Digite apenas números.\n");
+            printf("👥 Quantos jogadores? (min: %d, máx: %d): ", 
+                   MIN_JOGADORES, MAX_JOGADORES);
+            while (getchar() != '\n');
+            continue;
+        }
+        
+        if (numero < MIN_JOGADORES || numero > MAX_JOGADORES) {
+            printf("❌ Número inválido! Deve estar entre %d e %d.\n", 
+                   MIN_JOGADORES, MAX_JOGADORES);
+            printf("👥 Quantos jogadores? (min: %d, máx: %d): ", 
+                   MIN_JOGADORES, MAX_JOGADORES);
+            continue;
+        }
+        
+        entradaValida = true;
+    } while (!entradaValida);
+    
+    while (getchar() != '\n'); // Limpar buffer
+    return numero;
+}
+
+/**
+ * Aloca memória dinamicamente para array de jogadores
+ * 
+ * @param quantidade Número de jogadores a serem alocados
+ * @return Ponteiro para array alocado, ou NULL se falhou
+ */
+Jogador* alocarJogadores(int quantidade) {
+    if (quantidade <= 0) {
+        printf("❌ Erro: Quantidade inválida de jogadores (%d).\n", quantidade);
+        return NULL;
+    }
+    
+    Jogador *jogadores = (Jogador*)calloc(quantidade, sizeof(Jogador));
+    
+    if (jogadores == NULL) {
+        printf("❌ Erro crítico: Falha na alocação de memória para jogadores!\n");
+        return NULL;
+    }
+    
+    printf("👥 Alocação bem-sucedida: %d jogadores\n", quantidade);
+    return jogadores;
+}
+
+/**
+ * Cadastra todos os jogadores e atribui missões
+ * 
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ * @param missoes Array de missões disponíveis
+ */
+void cadastrarJogadores(Jogador* jogadores, int numJogadores, char missoes[][MAX_MISSAO]) {
+    const char* cores[] = {"Vermelho", "Azul", "Verde", "Amarelo", "Roxo", "Laranja"};
+    
+    printf("\n👤 ═══════════════════════════════════════════════════════════\n");
+    printf("                  CADASTRO DE JOGADORES\n");
+    printf("═══════════════════════════════════════════════════════════👤\n");
+    
+    for (int i = 0; i < numJogadores; i++) {
+        printf("\n--- JOGADOR %d ---\n", i + 1);
+        printf("Nome: ");
+        fgets(jogadores[i].nome, sizeof(jogadores[i].nome), stdin);
+        
+        // Remove quebra de linha
+        size_t len = strlen(jogadores[i].nome);
+        if (len > 0 && jogadores[i].nome[len - 1] == '\n') {
+            jogadores[i].nome[len - 1] = '\0';
+        }
+        
+        // Atribui cor automaticamente
+        strcpy(jogadores[i].cor, cores[i % 6]);
+        
+        // Inicializa status
+        jogadores[i].ativo = true;
+        jogadores[i].territoriosControlados = 0;
+        
+        // Aloca e atribui missão
+        jogadores[i].missao = (char*)malloc(MAX_MISSAO * sizeof(char));
+        if (jogadores[i].missao != NULL) {
+            int indiceMissao = rand() % TOTAL_MISSOES;
+            strcpy(jogadores[i].missao, missoes[indiceMissao]);
+            printf("🎯 Missão atribuída: %s\n", jogadores[i].missao);
+        }
+        
+        printf("🎨 Cor atribuída: %s\n", jogadores[i].cor);
+        printf("✅ Jogador cadastrado!\n");
+    }
+}
+
+/**
+ * Valida se um ataque é permitido (apenas contra territórios inimigos)
+ * 
+ * @param atacante Território atacante
+ * @param defensor Território defensor  
+ * @return true se ataque é válido, false caso contrário
+ */
+bool validarAtaque(const Territorio* atacante, const Territorio* defensor) {
+    if (atacante == NULL || defensor == NULL) {
+        printf("❌ Erro: Territórios inválidos!\n");
+        return false;
+    }
+    
+    // Verificar se são territórios de cores diferentes (inimigos)
+    if (strcmp(atacante->cor, defensor->cor) == 0) {
+        printf("❌ Ataque inválido: Não pode atacar território da mesma cor!\n");
+        printf("   🏴 %s (%s) não pode atacar %s (%s)\n", 
+               atacante->nome, atacante->cor, defensor->nome, defensor->cor);
+        return false;
+    }
+    
+    // Verificar se atacante tem tropas suficientes
+    if (atacante->tropas <= 1) {
+        printf("❌ Ataque inválido: Tropas insuficientes!\n");
+        printf("   🏴 %s tem apenas %d tropa(s) - mínimo necessário: 2\n", 
+               atacante->nome, atacante->tropas);
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Distribui territórios entre os jogadores no início do jogo
+ * 
+ * @param mapa Array de territórios
+ * @param numTerritorios Número de territórios
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ */
+void distribuirTerritorios(Territorio* mapa, int numTerritorios, Jogador* jogadores, int numJogadores) {
+    printf("\n🗺️ ═══════════════════════════════════════════════════════════\n");
+    printf("              DISTRIBUIÇÃO AUTOMÁTICA DE TERRITÓRIOS\n");
+    printf("═══════════════════════════════════════════════════════════🗺️\n");
+    
+    // Distribui territórios de forma alternada entre jogadores
+    for (int i = 0; i < numTerritorios; i++) {
+        int jogadorAtual = i % numJogadores;
+        
+        // Atualizar cor e dono do território
+        strcpy(mapa[i].cor, jogadores[jogadorAtual].cor);
+        strcpy(mapa[i].dono, jogadores[jogadorAtual].nome);
+        
+        // Tropas iniciais aleatórias (2-6)
+        mapa[i].tropas = (rand() % 5) + 2;
+        
+        printf("🏰 %s → %s (%s) - %d tropas\n", 
+               mapa[i].nome, jogadores[jogadorAtual].nome, 
+               jogadores[jogadorAtual].cor, mapa[i].tropas);
+    }
+    
+    printf("✅ Distribuição concluída!\n");
+}
+
+/**
+ * Atualiza estatísticas dos jogadores baseado no mapa atual
+ * 
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ * @param mapa Array de territórios
+ * @param numTerritorios Número de territórios
+ */
+void atualizarEstatisticasJogadores(Jogador* jogadores, int numJogadores, Territorio* mapa, int numTerritorios) {
+    // Zera contadores
+    for (int i = 0; i < numJogadores; i++) {
+        jogadores[i].territoriosControlados = 0;
+    }
+    
+    // Conta territórios por jogador
+    for (int i = 0; i < numTerritorios; i++) {
+        for (int j = 0; j < numJogadores; j++) {
+            if (strcmp(mapa[i].cor, jogadores[j].cor) == 0) {
+                jogadores[j].territoriosControlados++;
+                break;
+            }
+        }
+    }
+    
+    // Verifica se algum jogador foi eliminado
+    for (int i = 0; i < numJogadores; i++) {
+        if (jogadores[i].territoriosControlados == 0 && jogadores[i].ativo) {
+            jogadores[i].ativo = false;
+            printf("💀 %s foi eliminado do jogo!\n", jogadores[i].nome);
+        }
+    }
+}
+
+/**
+ * Verifica se algum jogador cumpriu sua missão e venceu
+ * 
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ * @param mapa Array de territórios
+ * @param numTerritorios Número de territórios
+ * @return Índice do jogador vencedor, ou -1 se ninguém venceu
+ */
+int verificarVencedor(Jogador* jogadores, int numJogadores, Territorio* mapa, int numTerritorios) {
+    for (int i = 0; i < numJogadores; i++) {
+        if (jogadores[i].ativo && jogadores[i].missao != NULL) {
+            if (verificarMissao(jogadores[i].missao, mapa, numTerritorios, jogadores[i].cor)) {
+                return i; // Retorna índice do vencedor
+            }
+        }
+    }
+    return -1; // Nenhum vencedor ainda
+}
+
+// ============================================================================
+// IMPLEMENTAÇÃO DAS FUNÇÕES - GERENCIAMENTO COMPLETO DE MEMÓRIA
+// ============================================================================
+
+/**
+ * Libera toda a memória alocada dinamicamente (territórios e missões)
+ * 
+ * @param mapa Array de territórios
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ */
+void liberarMemoriaCompleta(Territorio* mapa, Jogador* jogadores, int numJogadores) {
+    printf("\n🧹 ═══════════════════════════════════════════════════════════\n");
+    printf("              LIBERAÇÃO DE MEMÓRIA\n");
+    printf("═══════════════════════════════════════════════════════════🧹\n");
+    
+    // Liberar territórios
+    if (mapa != NULL) {
+        printf("🗑️  Liberando memória dos territórios...\n");
+        free(mapa);
+        printf("✅ Territórios liberados!\n");
+    }
+    
+    // Liberar missões e jogadores
+    if (jogadores != NULL) {
+        printf("🗑️  Liberando memória dos jogadores e missões...\n");
+        
+        for (int i = 0; i < numJogadores; i++) {
+            if (jogadores[i].missao != NULL) {
+                free(jogadores[i].missao);
+                jogadores[i].missao = NULL;
+            }
+        }
+        
+        free(jogadores);
+        printf("✅ Jogadores e missões liberados!\n");
+    }
+    
+    printf("🎉 Liberação de memória concluída com sucesso!\n");
+}
+
+/**
+ * Executa uma rodada de batalha no modo multiplayer
+ * 
+ * @param mapa Array de territórios
+ * @param numTerritorios Número de territórios
+ * @param jogadores Array de jogadores
+ * @param numJogadores Número de jogadores
+ */
+void executarBatalhaMultiplayer(Territorio *mapa, int numTerritorios, Jogador* jogadores, int numJogadores) {
+    int indiceAtacante, indiceDefensor;
+    
+    printf("\n⚔️ ═══════════════════════════════════════════════════════════\n");
+    printf("                    RODADA DE BATALHA\n");
+    printf("═══════════════════════════════════════════════════════════⚔️\n");
+    
+    // Mostrar territórios disponíveis com cores
+    printf("\n🗺️ TERRITÓRIOS DISPONÍVEIS:\n");
+    for (int i = 0; i < numTerritorios; i++) {
+        printf("   [%d] %s - %s (%s) - %d tropas\n", 
+               i + 1, mapa[i].nome, mapa[i].dono, mapa[i].cor, mapa[i].tropas);
+    }
+    
+    // Escolher atacante
+    printf("\n🏴 Escolha o território ATACANTE (1-%d): ", numTerritorios);
+    while (scanf("%d", &indiceAtacante) != 1 || 
+           indiceAtacante < 1 || indiceAtacante > numTerritorios) {
+        printf("❌ Índice inválido! Escolha entre 1 e %d: ", numTerritorios);
+        while (getchar() != '\n');
+    }
+    indiceAtacante--; // Converter para índice 0-based
+    
+    // Escolher defensor
+    printf("🏰 Escolha o território DEFENSOR (1-%d): ", numTerritorios);
+    while (scanf("%d", &indiceDefensor) != 1 || 
+           indiceDefensor < 1 || indiceDefensor > numTerritorios) {
+        printf("❌ Índice inválido! Escolha entre 1 e %d: ", numTerritorios);
+        while (getchar() != '\n');
+    }
+    indiceDefensor--; // Converter para índice 0-based
+    
+    // Verificar se são territórios diferentes
+    if (indiceAtacante == indiceDefensor) {
+        printf("❌ Um território não pode atacar a si mesmo!\n");
+        aguardarEnter();
+        return;
+    }
+    
+    // Validar ataque (só contra inimigos)
+    if (!validarAtaque(&mapa[indiceAtacante], &mapa[indiceDefensor])) {
+        aguardarEnter();
+        return;
+    }
+    
+    // Executar batalha
+    bool sucesso = atacar(&mapa[indiceAtacante], &mapa[indiceDefensor]);
+    
+    if (sucesso) {
+        printf("🎊 Território conquistado com sucesso!\n");
+    }
+    
+    aguardarEnter();
 }
